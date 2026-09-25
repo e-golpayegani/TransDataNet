@@ -1,7 +1,7 @@
 {
     "filename": "support_points_Leipzig",
-    "creation_date": "2024-05-31T11:04:20.740157",
-    "version": null,
+    "creation_date": "2026-09-21T09:59:29.302794",
+    "version": "",
     "stage": "interim",
     "description": "Description of the contents",
     "used in function:": "create_street_net_and_intersection_gpkg"
