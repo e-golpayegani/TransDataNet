@@ -1,357 +1,264 @@
-# ============================================================
-# pedestrian_volume.py
-#
-# Purpose:
-# Calculate pedestrian volume for an already processed city
-# without rerunning pedestrian_network/main.py.
-#
-# Inputs:
-# - existing city street network
-# - sDNA centrality result
-#
-# Current NB model:
-# - service/retail/gastronomy per length
-# - hotels/pensions per length
-#
-# A closeness term can be activated later after the NB model
-# has been refitted and a valid coefficient is available.
-# ============================================================
-
 from pathlib import Path
+import re
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 
 from src.utils.config_loader import config_data
-from src.utils.load_data import find_geo_packages
 
 
 # ============================================================
-# User settings
+# CONFIGURATION
 # ============================================================
 
 CITY = config_data["city_name"]
 
-OUTPUT_ROOT = Path("src/data/output")
-CITY_OUTPUT_DIR = OUTPUT_ROOT / CITY
-DRAFT_DIR = CITY_OUTPUT_DIR / "draft"
-
-DRAFT_DIR.mkdir(parents=True, exist_ok=True)
-
-
-CENTRALITY_GPKG = (
-    DRAFT_DIR
-    / f"sdna_centrality_{CITY}_v1.0.gpkg"
-)
-
-OUTPUT_GPKG = (
-    DRAFT_DIR
-    / f"pedestrian_volume_{CITY}_v1.0.gpkg"
-)
+PROJECT_DIR = Path(__file__).resolve().parent
+OUTPUT_ROOT = PROJECT_DIR / "src" / "data" / "output"
+CITY_DIR = OUTPUT_ROOT / CITY
+MODEL_DIR = CITY_DIR / "model"
 
 
-# ------------------------------------------------------------
-# Existing NB model variables
-# ------------------------------------------------------------
+# ============================================================
+# MODEL
+# ============================================================
 
-SERVICE_COL = (
-    "Dienstleistung, Einzelhandel, Gastronomie: Anzahl"
-)
-
-HOTEL_COL = (
-    "Hotels, Pensionen: Anzahl"
-)
+# Intercept from your already-fitted Negative Binomial model
+INTERCEPT_CL = 6.263
+INTERCEPT_PoI = 6.923
 
 
-# ------------------------------------------------------------
-# sDNA field names
+# Add/remove variables here depending on the model you want to apply.
 #
-# IMPORTANT:
-# Replace these after your first sDNA Integral run with the
-# actual column names produced by your chosen radius/settings.
-# ------------------------------------------------------------
-
-CLOSENESS_COL = None
-BETWEENNESS_COL = None
-
-
-# ------------------------------------------------------------
-# Existing model coefficients
-# ------------------------------------------------------------
-
-B0 = 6.923
-B1 = 0.006
-B2 = 0.098
-
-
-# ------------------------------------------------------------
-# Optional future closeness coefficient
-#
-# Keep None until you refit the NB model with closeness.
-# ------------------------------------------------------------
-
-B_CLOSENESS = None
-
-
-# ============================================================
-# Load existing street network
-# ============================================================
-
-def load_street_network():
-
-    geo_packages = find_geo_packages(
-        city_name=CITY,
-        output_folder=str(OUTPUT_ROOT),
-    )
-
-    if "streets" not in geo_packages:
-        raise FileNotFoundError(
-            f"No existing street network found for {CITY}."
-        )
-
-    street_path = geo_packages["streets"]
-
-    print(f"Loading street network:")
-    print(f"  {street_path}")
-
-    streets = gpd.read_file(
-        street_path
-    ).reset_index(drop=True)
-
-    # Must reproduce the same rows used for sDNA preparation.
-    streets["sdna_id"] = streets.index + 1
-
-    return streets
-
-
-# ============================================================
-# Add sDNA variables
-# ============================================================
-
-def add_centrality_variables(streets):
-
-    if not CENTRALITY_GPKG.exists():
-
-        print(
-            "No sDNA centrality file found. "
-            "PV will be calculated without centrality."
-        )
-
-        return streets
-
-    print("Loading sDNA centrality...")
-
-    centrality = gpd.read_file(
-        CENTRALITY_GPKG,
-        layer="sdna_centrality",
-    )
-
-    if "sdna_id" not in centrality.columns:
-        raise KeyError(
-            "Centrality layer has no 'sdna_id' field."
-        )
-
-    columns_to_keep = [
-        "sdna_id",
-    ]
-
-    if CLOSENESS_COL is not None:
-
-        if CLOSENESS_COL not in centrality.columns:
-            raise KeyError(
-                f"Closeness field not found: "
-                f"{CLOSENESS_COL}"
-            )
-
-        columns_to_keep.append(
-            CLOSENESS_COL
-        )
-
-    if BETWEENNESS_COL is not None:
-
-        if BETWEENNESS_COL not in centrality.columns:
-            raise KeyError(
-                f"Betweenness field not found: "
-                f"{BETWEENNESS_COL}"
-            )
-
-        columns_to_keep.append(
-            BETWEENNESS_COL
-        )
-
-    centrality_data = centrality[
-        columns_to_keep
-    ].copy()
-
-    streets = streets.merge(
-        centrality_data,
-        on="sdna_id",
-        how="left",
-    )
-
-    return streets
-
-
-# ============================================================
-# Check model variables
-# ============================================================
-
-def check_required_variables(streets):
-
-    required = [
-        "laenge [km]",
-        SERVICE_COL,
-        HOTEL_COL,
-    ]
-
-    missing = [
-        column
-        for column in required
-        if column not in streets.columns
-    ]
-
-    if missing:
-        raise KeyError(
-            "The existing street network is missing "
-            "required PV variables:\n"
-            f"{missing}\n\n"
-            "These variables must already have been created "
-            "by the city data-processing workflow."
-        )
-
-
-# ============================================================
-# Calculate explanatory variables
-# ============================================================
+# coefficient = coefficient from your fitted NB model
+# transform:
+#   "none"       -> use the variable directly
+#   "per_length" -> divide by (length_km * 10)
 
 MODEL_VARIABLES = {
-    "service": {
-        "source_col": "Dienstleistung, Einzelhandel, Gastronomie: Anzahl",
-        "transform": "per_length",
-        "coefficient": 0.006,
-    },
 
-    "hotels": {
-        "source_col": "Hotels, Pensionen: Anzahl",
-        "transform": "per_length",
-        "coefficient": 0.098,
-    },
-
-    "closeness": {
-        "source_col": "Closeness_800",
+    # Example: closeness/accessibility only
+    "NQPDA500": {
+        "source_col": "NQPDA500",
+        "coefficient": 0.904,   # <-- PUT YOUR COEFFICIENT HERE
         "transform": "none",
-        "coefficient": 0.250,
     },
+
+    # Uncomment if included in your model:
+    #
+    # "service_retail_gastronomy": {
+    #     "source_col":
+    #         "Dienstleistung, Einzelhandel, Gastronomie: Anzahl",
+    #     "coefficient": 0.006,
+    #     "transform": "per_length",
+    # },
+    #
+    # "hotels": {
+    #     "source_col":
+    #         "Hotels, Pensionen: Anzahl",
+    #     "coefficient": 0.098,
+    #     "transform": "per_length",
+    # },
 }
 
-def calculate_model_variables(streets):
 
-    denominator = (
-        pd.to_numeric(
-            streets["laenge [km]"],
-            errors="coerce",
+LENGTH_COLUMN = "laenge [km]"
+PER_LENGTH_FACTOR = 10.0
+
+
+# ============================================================
+# FIND LATEST INPUT NETWORK
+# ============================================================
+
+def get_version(path):
+
+    match = re.search(
+        r"_v(\d+)\.(\d+)\.gpkg$",
+        path.name
+    )
+
+    if match is None:
+        return -1, -1
+
+    return int(match.group(1)), int(match.group(2))
+
+
+def find_latest_centrality_network():
+
+    files = list(
+        MODEL_DIR.glob(
+            f"Centrality_output_{CITY}.shp"
         )
-        * 10.0
-    ).replace(0, np.nan)
+    )
 
-    for variable_name, settings in MODEL_VARIABLES.items():
+    if not files:
+        raise FileNotFoundError(
+            f"No centrality network found in:\n{MODEL_DIR}"
+        )
 
-        source_col = settings["source_col"]
-        transform = settings["transform"]
+    return max(files, key=get_version)
 
-        if source_col not in streets.columns:
+
+# ============================================================
+# PREPARE VARIABLE
+# ============================================================
+
+def prepare_variable(gdf, variable_name, settings):
+
+    source_col = settings["source_col"]
+    transform = settings.get("transform", "none")
+
+    if source_col not in gdf.columns:
+        raise KeyError(
+            f"Column '{source_col}' required for "
+            f"'{variable_name}' was not found."
+        )
+
+    values = pd.to_numeric(
+        gdf[source_col],
+        errors="coerce"
+    )
+
+    if transform == "none":
+
+        return values
+
+    elif transform == "per_length":
+
+        if LENGTH_COLUMN not in gdf.columns:
             raise KeyError(
-                f"Required model variable not found: {source_col}"
+                f"Length column '{LENGTH_COLUMN}' was not found."
             )
 
-        values = pd.to_numeric(
-            streets[source_col],
-            errors="coerce",
+        length = pd.to_numeric(
+            gdf[LENGTH_COLUMN],
+            errors="coerce"
         )
 
-        if transform == "per_length":
-            values = values.fillna(0) / denominator
+        denominator = (
+            length * PER_LENGTH_FACTOR
+        ).replace(0, np.nan)
 
-        elif transform == "none":
-            pass
+        return values / denominator
 
-        else:
-            raise ValueError(
-                f"Unknown transformation: {transform}"
-            )
+    else:
 
-        streets[f"PV_x_{variable_name}"] = values
+        raise ValueError(
+            f"Unknown transformation: {transform}"
+        )
 
-    return streets
+
 # ============================================================
-# Apply Negative Binomial mean model
+# APPLY EXISTING NB MODEL
 # ============================================================
 
-def calculate_pedestrian_volume(streets):
+def calculate_pedestrian_volume(gdf):
 
-    linear_predictor = B0
+    # Start with the intercept
+    linear_predictor = pd.Series(
+        INTERCEPT_CL,
+        index=gdf.index,
+        dtype=float
+    )
 
+    print("\nModel:")
+    print(f"Intercept = {INTERCEPT_CL}")
+
+    # Add beta * X for every selected variable
     for variable_name, settings in MODEL_VARIABLES.items():
 
         coefficient = settings["coefficient"]
 
-        linear_predictor = (
-            linear_predictor
-            + coefficient
-            * streets[f"PV_x_{variable_name}"]
+        x = prepare_variable(
+            gdf,
+            variable_name,
+            settings
         )
 
-    streets["PV"] = (
-        np.exp(linear_predictor)
-        .fillna(0)
-        .round(0)
+        # Optional: save the exact transformed variable
+        # that was fed into the model
+        model_col = f"model_{variable_name}"
+        gdf[model_col] = x
+
+        linear_predictor += coefficient * x
+
+        print(
+            f"{variable_name}: "
+            f"beta = {coefficient}"
+        )
+
+    # --------------------------------------------------------
+    # NB expected pedestrian volume
+    # --------------------------------------------------------
+
+    gdf["PV_linear_predictor"] = linear_predictor
+
+    gdf["PV"] = np.exp(
+        linear_predictor
     )
 
-    return streets
+    # Invalid model inputs remain NaN
+    gdf["PV"] = gdf["PV"].replace(
+        [np.inf, -np.inf],
+        np.nan
+    )
+
+    # Rounded predicted pedestrian count
+    gdf["PV"] = (
+        gdf["PV"]
+        .round()
+        .astype("Int64")
+    )
+
+    return gdf
 
 
 # ============================================================
-# Main standalone workflow
+# SAVE
+# ============================================================
+
+def save_output(gdf):
+
+    output_path = (
+        MODEL_DIR /
+        f"Pedestrian_volume_{CITY}_v1.0.gpkg"
+    )
+
+    gdf.to_file(
+        output_path,
+        layer="pedestrian_volume",
+        driver="GPKG"
+    )
+
+    print("\nOutput saved:")
+    print(output_path)
+
+
+# ============================================================
+# MAIN
 # ============================================================
 
 def main():
 
-    print("=" * 60)
-    print("Pedestrian Volume modelling")
-    print(f"City: {CITY}")
-    print("=" * 60)
+    print("\n====================================")
+    print("PEDESTRIAN VOLUME")
+    print("====================================")
 
-    streets = load_street_network()
+    input_path = find_latest_centrality_network()
 
-    check_required_variables(
-        streets
-    )
+    print("\nInput:")
+    print(input_path)
 
-    streets = add_centrality_variables(
-        streets
-    )
+    gdf = gpd.read_file(input_path)
 
-    streets = calculate_model_variables(
-        streets
-    )
+    print(f"Street segments: {len(gdf)}")
 
-    streets = calculate_pedestrian_volume(
-        streets
-    )
+    gdf = calculate_pedestrian_volume(gdf)
 
-    streets.to_file(
-        OUTPUT_GPKG,
-        layer="pedestrian_volume",
-        driver="GPKG",
-    )
+    save_output(gdf)
 
-    print("=" * 60)
-    print("Done.")
-    print(f"Street segments: {len(streets):,}")
-    print(f"Saved:")
-    print(f"  {OUTPUT_GPKG}")
-    print("=" * 60)
+    print("\nDone.")
 
 
 if __name__ == "__main__":
