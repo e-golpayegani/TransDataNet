@@ -228,7 +228,7 @@ def save_output(gdf):
 
     gdf.to_file(
         output_path,
-        layer="pedestrian_volume",
+        layer="pedestrian_volume_PoI",
         driver="GPKG"
     )
 
