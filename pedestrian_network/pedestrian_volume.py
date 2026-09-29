@@ -37,29 +37,29 @@ INTERCEPT_PoI = 6.923
 #   "per_length" -> divide by (length_km * 10)
 
 MODEL_VARIABLES = {
-
+'''
     # Example: closeness/accessibility only
     "NQPDA500": {
         "source_col": "NQPDA500",
         "coefficient": 0.904,   # <-- PUT YOUR COEFFICIENT HERE
         "transform": "none",
     },
-
+'''
     # Uncomment if included in your model:
     #
-    # "service_retail_gastronomy": {
-    #     "source_col":
-    #         "Dienstleistung, Einzelhandel, Gastronomie: Anzahl",
-    #     "coefficient": 0.006,
-    #     "transform": "per_length",
-    # },
-    #
-    # "hotels": {
-    #     "source_col":
-    #         "Hotels, Pensionen: Anzahl",
-    #     "coefficient": 0.098,
-    #     "transform": "per_length",
-    # },
+    "service_retail_gastronomy": {
+        "source_col":
+            "Dienstleistung, Einzelhandel, Gastronomie: Anzahl",
+        "coefficient": 0.008,
+        "transform": "per_length",
+    },
+    
+    "hotels": {
+        "source_col":
+            "Hotels, Pensionen: Anzahl",
+        "coefficient": 0.095,
+        "transform": "per_length",
+    },
 }
 
 
@@ -157,14 +157,15 @@ def calculate_pedestrian_volume(gdf):
 
     # Start with the intercept
     linear_predictor = pd.Series(
-        INTERCEPT_CL,
+        # INTERCEPT_CL,
+        INTERCEPT_PoI,
         index=gdf.index,
         dtype=float
     )
 
     print("\nModel:")
-    print(f"Intercept = {INTERCEPT_CL}")
-
+    #print(f"Intercept = {INTERCEPT_CL}")
+    print(f"Intercept = {INTERCEPT_PoI}")
     # Add beta * X for every selected variable
     for variable_name, settings in MODEL_VARIABLES.items():
 
@@ -222,7 +223,7 @@ def save_output(gdf):
 
     output_path = (
         MODEL_DIR /
-        f"Pedestrian_volume_{CITY}_v1.0.gpkg"
+        f"Pedestrian_volume_PoI_{CITY}_v1.0.gpkg"
     )
 
     gdf.to_file(
