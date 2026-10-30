@@ -47,11 +47,11 @@ JUNCTION_AREAS_LAYER = "junction_areas"
 
 
 def normalize_osm_values(value):
+    if isinstance(value, (list, tuple, set)):
+        return [item for part in value for item in normalize_osm_values(part)]
+
     if pd.isna(value):
         return []
-
-    if isinstance(value, list):
-        return [str(v).strip() for v in value if str(v).strip()]
 
     value = str(value).strip()
 
@@ -152,6 +152,8 @@ def build_output_row(j2j_id, group, edge_type, start_junction_id, end_junction_i
 
     row = {
         "j2j_id": j2j_id,
+        # Original OSM way IDs are provenance, not additional crash assignments.
+        "osmid": unique_join(group["osmid"]),
         "edge_type": edge_type,
         "start_junction_id": start_junction_id,
         "end_junction_id": end_junction_id,

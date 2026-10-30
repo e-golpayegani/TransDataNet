@@ -662,6 +662,8 @@ def aggregate_level4_row(
 
     row = {
         "level4_id": level4_id,
+        # Deduplicate source way IDs when carriageways merge; keep one Level 4 row.
+        "osmid": unique_join(group["osmid"]),
         "merge_status": merge_status,
         "n_carriageways": len(group),
         "source_j2j_ids": source_j2j_ids,
@@ -806,6 +808,7 @@ j2j = gpd.read_file(
 )
 
 required_columns = {
+    "osmid",
     "j2j_id",
     "edge_type",
     "start_junction_id",
@@ -821,7 +824,8 @@ missing_columns = (
 if missing_columns:
     raise KeyError(
         "The Level 3A layer is missing required columns: "
-        f"{sorted(missing_columns)}"
+        f"{sorted(missing_columns)}. Regenerate Level 3 with script 03 "
+        "(and script 04 if using its enriched layer) before running script 05."
     )
 
 if j2j.crs is None:
