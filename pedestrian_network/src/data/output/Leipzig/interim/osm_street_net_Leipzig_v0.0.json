@@ -1,6 +1,10 @@
 {
     "filename": "osm_street_net_Leipzig_v0.0",
+<<<<<<< HEAD
     "creation_date": "2026-09-16T13:25:44.434235",
+=======
+    "creation_date": "2026-09-21T09:59:19.653714",
+>>>>>>> 1475c7516231e8e2a09a7a6a35142a5405cfe6c8
     "version": "0.0",
     "stage": "interim",
     "description": "Description of the contents",

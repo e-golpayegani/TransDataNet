@@ -1,100 +1,196 @@
+"""
+centrality.py
+
+Purpose
+-------
+Create a separate copy of the processed street network for sDNA
+centrality analysis.
+
+The city is read automatically from config.yml using config_data.
+
+The script:
+
+1. Reads the city from config.yml.
+2. Finds the latest street_net_<city>_v*.gpkg in the city's draft folder.
+3. Loads that street network.
+4. Performs basic diagnostic checks.
+5. Adds a stable "centrality_id".
+6. Records which street-network file was used as the source.
+7. Saves a separate centrality street network in the draft folder.
+
+The output can then be used directly as the input network in
+sDNA Integral in QGIS.
+
+IMPORTANT
+---------
+This script does NOT:
+
+- simplify the network
+- clean the network
+- snap lines
+- split lines
+- merge lines
+- remove lines
+- change topology
+- change geometry
+- calculate centrality
+
+Closeness/farness and betweenness are calculated manually using
+sDNA Integral in QGIS.
+"""
+
+
+# ============================================================
+# IMPORTS
+# ============================================================
+
 from pathlib import Path
 import re
 
 import geopandas as gpd
-import pandas as pd
 
 from src.utils.config_loader import config_data
 
 
-# ============================================================
-# centrality.py
-#
-# Purpose:
-# Semi-automatic sDNA centrality workflow.
-#
-# This script DOES NOT run sDNA itself.
-#
-# Workflow:
-#
-# MODE = "prepare"
-#   1. Find latest existing street_net_<CITY>_v*.gpkg
-#   2. Check the network
-#   3. Add/preserve an sdna_id
-#   4. Save a temporary analysis-ready copy in memory/output
-#      only if needed for preserving the ID
-#   5. Tell the user exactly which layer to use in QGIS
-#
-# Then manually in QGIS:
-#   6. Run sDNA Integral
-#   7. Save result as:
-#      sdna_integral_<CITY>_v1.0.gpkg
-#
-# MODE = "process"
-#   8. Load the sDNA result
-#   9. Check fields and IDs
-#   10. Save standardized:
-#       sdna_centrality_<CITY>_v1.0.gpkg
-#
-# ============================================================
-
 
 # ============================================================
-# 1. User settings
+# SETTINGS
 # ============================================================
+
+# City is read automatically from config.yml.
+#
+# This is the same approach used in main.py.
+#
+# Example:
+#
+# city_name: Leipzig
+#
+# -> CITY = "Leipzig"
 
 CITY = config_data["city_name"]
 
-# Choose:
-# "prepare"
-# "process"
-MODE = "prepare"
+
+# Version of the centrality-specific street network.
+#
+# This version is independent from the version of the source
+# street network.
+
+CENTRALITY_VERSION = "1.0"
 
 
 # ============================================================
-# 2. Folder structure
+# PATHS
 # ============================================================
 
-OUTPUT_ROOT = Path("src/data/output")
+# centrality.py is located in:
+#
+# pedestrian_network/
+#
+# Therefore the project directory is the directory containing
+# this script.
 
-CITY_DIR = OUTPUT_ROOT / CITY
-DRAFT_DIR = CITY_DIR / "draft"
+PROJECT_DIR = Path(__file__).resolve().parent
 
-DRAFT_DIR.mkdir(
-    parents=True,
-    exist_ok=True,
+
+# Existing project output structure:
+#
+# pedestrian_network/
+# └── src/
+#     └── data/
+#         └── output/
+#             └── Leipzig/
+#                 └── draft/
+
+OUTPUT_ROOT = (
+    PROJECT_DIR
+    / "src"
+    / "data"
+    / "output"
 )
 
 
-# Manual QGIS/sDNA result
-SDNA_RAW_OUTPUT = (
+CITY_DIR = (
+    OUTPUT_ROOT
+    / CITY
+)
+
+
+DRAFT_DIR = (
+    CITY_DIR
+    / "draft"
+)
+
+
+# Check that the city output directory exists.
+
+if not CITY_DIR.exists():
+
+    raise FileNotFoundError(
+        "\n"
+        f"City output directory does not exist:\n"
+        f"{CITY_DIR}\n\n"
+        f"Check city_name in config.yml.\n"
+        f"Current city: {CITY}"
+    )
+
+
+# Check that draft directory exists.
+
+if not DRAFT_DIR.exists():
+
+    raise FileNotFoundError(
+        "\n"
+        f"Draft directory does not exist:\n"
+        f"{DRAFT_DIR}"
+    )
+
+
+# Output of THIS script.
+
+CENTRALITY_NETWORK_PATH = (
     DRAFT_DIR
-    / f"sdna_integral_{CITY}_v1.0.gpkg"
-)
-
-# Standardized centrality output
-SDNA_CENTRALITY_OUTPUT = (
-    DRAFT_DIR
-    / f"sdna_centrality_{CITY}_v1.0.gpkg"
+    / (
+        f"centrality_street_net_"
+        f"{CITY}_"
+        f"v{CENTRALITY_VERSION}.gpkg"
+    )
 )
 
 
 # ============================================================
-# 3. Helpers
+# VERSION HANDLING
 # ============================================================
 
-def version_tuple(path):
+def get_version(path):
     """
-    Extract version from filenames such as:
+    Extract the version number from a versioned GeoPackage.
 
-        street_net_Leipzig_v1.0.gpkg
-        street_net_Leipzig_v1.2.gpkg
-        street_net_Leipzig_v2.0.gpkg
+    Examples
+    --------
 
-    Returns:
-        (major, minor)
+    street_net_Leipzig_v1.0.gpkg
+        -> (1, 0)
 
-    This is safer than sorting filenames alphabetically.
+    street_net_Leipzig_v1.2.gpkg
+        -> (1, 2)
+
+    street_net_Leipzig_v2.3.gpkg
+        -> (2, 3)
+
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        Path to the GeoPackage.
+
+
+    Returns
+    -------
+    tuple
+        (major_version, minor_version)
+
+        Returns (-1, -1) if no valid version number
+        can be found.
     """
 
     match = re.search(
@@ -103,360 +199,653 @@ def version_tuple(path):
         flags=re.IGNORECASE,
     )
 
-    if not match:
+    if match is None:
+
         return (-1, -1)
 
-    return (
-        int(match.group(1)),
-        int(match.group(2)),
+    major = int(
+        match.group(1)
     )
 
+    minor = int(
+        match.group(2)
+    )
+
+    return (
+        major,
+        minor,
+    )
+
+
+# ============================================================
+# FIND LATEST STREET NETWORK
+# ============================================================
 
 def find_latest_street_network():
     """
-    Find the most recent versioned street network in:
+    Find the latest processed street network for the city.
 
-        src/data/output/<CITY>/draft/
+    Search location
+    ---------------
+
+    src/data/output/<CITY>/draft/
+
+
+    Expected naming
+    ---------------
+
+    street_net_<CITY>_v*.gpkg
+
+
+    Example
+    -------
+
+    If draft contains:
+
+        street_net_Leipzig_v1.0.gpkg
+        street_net_Leipzig_v1.1.gpkg
+        street_net_Leipzig_v1.2.gpkg
+
+    this function returns:
+
+        street_net_Leipzig_v1.2.gpkg
     """
+
+    pattern = (
+        f"street_net_{CITY}_v*.gpkg"
+    )
+
 
     candidates = list(
         DRAFT_DIR.glob(
-            f"street_net_{CITY}_v*.gpkg"
+            pattern
         )
     )
 
+
     if not candidates:
+
         raise FileNotFoundError(
-            f"No street network found for {CITY} in:\n"
-            f"{DRAFT_DIR}\n\n"
-            "Expected something like:\n"
-            f"street_net_{CITY}_v1.0.gpkg"
+            "\n"
+            "No processed street network found.\n\n"
+            f"City:\n"
+            f"  {CITY}\n\n"
+            f"Folder searched:\n"
+            f"  {DRAFT_DIR}\n\n"
+            f"Expected filename pattern:\n"
+            f"  street_net_{CITY}_v*.gpkg"
         )
+
 
     latest = max(
         candidates,
-        key=version_tuple,
+        key=get_version,
     )
+
 
     return latest
 
 
-def check_street_network(streets):
+# ============================================================
+# NETWORK CHECK
+# ============================================================
+
+def check_network(gdf):
     """
-    Basic checks before using the layer in sDNA.
+    Perform basic diagnostic checks before the network
+    is sent to sDNA.
+
+    IMPORTANT
+    ---------
+
+    This function only REPORTS problems.
+
+    It does not:
+
+    - repair geometry
+    - simplify geometry
+    - snap geometry
+    - remove geometry
+    - modify topology
     """
 
-    if streets.empty:
-        raise ValueError(
-            "Street network is empty."
-        )
 
-    if streets.crs is None:
-        raise ValueError(
-            "Street network has no CRS."
-        )
-
-    if streets.crs.is_geographic:
-        raise ValueError(
-            "Street network uses a geographic CRS.\n"
-            "sDNA distance-based analysis should use a "
-            "projected CRS in metres."
-        )
-
-    if "geometry" not in streets.columns:
-        raise KeyError(
-            "Street network has no geometry column."
-        )
-
-    invalid_geometry = (
-        streets.geometry.isna()
-        | streets.geometry.is_empty
+    print(
+        "\n"
+        "============================================================"
     )
 
-    if invalid_geometry.any():
+    print(
+        "NETWORK CHECK"
+    )
+
+    print(
+        "============================================================"
+    )
+
+
+    # --------------------------------------------------------
+    # Empty dataset
+    # --------------------------------------------------------
+
+    if gdf.empty:
+
+        raise ValueError(
+            "The street network is empty."
+        )
+
+
+    print(
+        f"\nNumber of street features: "
+        f"{len(gdf):,}"
+    )
+
+
+    # --------------------------------------------------------
+    # CRS
+    # --------------------------------------------------------
+
+    if gdf.crs is None:
+
+        raise ValueError(
+            "\nThe street network has no CRS."
+        )
+
+
+    print(
+        f"\nCRS:\n"
+        f"  {gdf.crs}"
+    )
+
+
+    if gdf.crs.is_geographic:
+
         print(
-            "WARNING: "
-            f"{invalid_geometry.sum():,} "
-            "street features have empty/missing geometry."
-        )
-
-
-def add_sdna_id(streets):
-    """
-    Add a stable ID for matching the sDNA result back to
-    the source street segment.
-
-    If sdna_id already exists, preserve it.
-    """
-
-    streets = streets.copy()
-
-    if "sdna_id" not in streets.columns:
-
-        streets = streets.reset_index(
-            drop=True
-        )
-
-        streets["sdna_id"] = (
-            streets.index + 1
-        )
-
-        print(
-            "Added new 'sdna_id' field."
+            "\nWARNING:"
+            "\nThe network uses a geographic CRS."
+            "\nFor metric-radius centrality analysis, "
+            "a projected CRS in metres is recommended."
         )
 
     else:
 
         print(
-            "Existing 'sdna_id' field found "
-            "and preserved."
+            "\nCRS type:"
+            "\n  Projected"
         )
 
-    if streets["sdna_id"].duplicated().any():
+
+    # --------------------------------------------------------
+    # Geometry column
+    # --------------------------------------------------------
+
+    if "geometry" not in gdf.columns:
+
         raise ValueError(
-            "'sdna_id' is not unique."
+            "No geometry column found."
         )
 
-    return streets
+
+    # --------------------------------------------------------
+    # Geometry types
+    # --------------------------------------------------------
+
+    geometry_types = (
+        gdf.geometry
+        .geom_type
+        .value_counts()
+    )
+
+
+    print(
+        "\nGeometry types:"
+    )
+
+
+    for geometry_type, count in geometry_types.items():
+
+        print(
+            f"  {geometry_type}: "
+            f"{count:,}"
+        )
+
+
+    # --------------------------------------------------------
+    # Missing geometries
+    # --------------------------------------------------------
+
+    missing_geometry = (
+        gdf.geometry.isna()
+    )
+
+
+    number_missing = int(
+        missing_geometry.sum()
+    )
+
+
+    print(
+        f"\nMissing geometries: "
+        f"{number_missing:,}"
+    )
+
+
+    # --------------------------------------------------------
+    # Empty geometries
+    # --------------------------------------------------------
+
+    empty_geometry = (
+        gdf.geometry.is_empty
+    )
+
+
+    number_empty = int(
+        empty_geometry.sum()
+    )
+
+
+    print(
+        f"Empty geometries: "
+        f"{number_empty:,}"
+    )
+
+
+    # --------------------------------------------------------
+    # Invalid geometries
+    # --------------------------------------------------------
+
+    invalid_geometry = (
+        ~gdf.geometry.is_valid
+    )
+
+
+    number_invalid = int(
+        invalid_geometry.sum()
+    )
+
+
+    print(
+        f"Invalid geometries: "
+        f"{number_invalid:,}"
+    )
+
+
+    if number_invalid > 0:
+
+        print(
+            "\nWARNING:"
+            "\nInvalid geometries were detected."
+            "\nThey are NOT being repaired automatically."
+        )
+
+
+    # --------------------------------------------------------
+    # Warnings
+    # --------------------------------------------------------
+
+    if (
+        number_missing > 0
+        or number_empty > 0
+    ):
+
+        print(
+            "\nWARNING:"
+            "\nMissing or empty geometries were detected."
+            "\nNothing has been removed automatically."
+        )
 
 
 # ============================================================
-# 4. PREPARE MODE
+# CENTRALITY ID
 # ============================================================
 
-def prepare_for_sdna():
+def add_centrality_id(gdf):
+    """
+    Create a stable identifier for the centrality network.
 
-    street_path = (
+    This identifier allows the sDNA result to be linked
+    back to the street network.
+
+    If centrality_id already exists, it is checked and
+    preserved.
+    """
+
+
+    gdf = gdf.copy()
+
+
+    # --------------------------------------------------------
+    # Existing ID
+    # --------------------------------------------------------
+
+    if "centrality_id" in gdf.columns:
+
+        print(
+            "\nExisting 'centrality_id' found."
+        )
+
+
+        # Missing IDs
+
+        number_missing_ids = int(
+            gdf[
+                "centrality_id"
+            ]
+            .isna()
+            .sum()
+        )
+
+
+        if number_missing_ids > 0:
+
+            raise ValueError(
+                "\n"
+                "Existing centrality_id contains "
+                f"{number_missing_ids:,} missing values."
+            )
+
+
+        # Duplicate IDs
+
+        number_duplicate_ids = int(
+            gdf[
+                "centrality_id"
+            ]
+            .duplicated()
+            .sum()
+        )
+
+
+        if number_duplicate_ids > 0:
+
+            raise ValueError(
+                "\n"
+                "Existing centrality_id contains "
+                f"{number_duplicate_ids:,} duplicates."
+            )
+
+
+        print(
+            "Existing centrality_id is valid."
+        )
+
+
+        return gdf
+
+
+    # --------------------------------------------------------
+    # New ID
+    # --------------------------------------------------------
+
+    gdf = gdf.reset_index(
+        drop=True
+    )
+
+
+    gdf[
+        "centrality_id"
+    ] = (
+        gdf.index + 1
+    )
+
+
+    print(
+        "\nCreated new 'centrality_id'."
+    )
+
+
+    return gdf
+
+
+# ============================================================
+# CREATE CENTRALITY STREET NETWORK
+# ============================================================
+
+def create_centrality_network():
+    """
+    Main workflow.
+    """
+
+
+    print(
+        "\n"
+        "============================================================"
+    )
+
+    print(
+        "CENTRALITY STREET NETWORK"
+    )
+
+    print(
+        "============================================================"
+    )
+
+
+    print(
+        f"\nCity from config.yml:"
+        f"\n  {CITY}"
+    )
+
+
+    # --------------------------------------------------------
+    # Find latest street network
+    # --------------------------------------------------------
+
+    source_path = (
         find_latest_street_network()
     )
 
-    print("=" * 60)
-    print("Preparing street network for sDNA")
-    print("=" * 60)
 
-    print(
-        f"City: {CITY}"
+    source_version = (
+        get_version(
+            source_path
+        )
     )
 
-    print(
-        "Latest street network:"
-    )
 
     print(
-        f"  {street_path}"
+        "\nLatest processed street network:"
     )
+
+
+    print(
+        f"  {source_path.name}"
+    )
+
+
+    print(
+        f"\nDetected source version:"
+        f"\n  v{source_version[0]}."
+        f"{source_version[1]}"
+    )
+
+
+    # --------------------------------------------------------
+    # Load
+    # --------------------------------------------------------
+
+    print(
+        "\nLoading network..."
+    )
+
 
     streets = gpd.read_file(
-        street_path
+        source_path
     )
 
-    check_street_network(
+
+    # --------------------------------------------------------
+    # Check
+    # --------------------------------------------------------
+
+    check_network(
         streets
     )
 
-    streets = add_sdna_id(
-        streets
-    )
-
-    print(
-        f"Street segments: "
-        f"{len(streets):,}"
-    )
-
-    print(
-        f"CRS: {streets.crs}"
-    )
 
     # --------------------------------------------------------
-    # IMPORTANT
-    #
-    # We need sdna_id to survive the QGIS/sDNA round trip.
-    #
-    # Therefore save an analysis copy only if the original
-    # street network does not already contain sdna_id.
+    # Stable ID
     # --------------------------------------------------------
 
-    analysis_path = (
-        DRAFT_DIR
-        / f"street_net_{CITY}_sdna.gpkg"
+    streets = (
+        add_centrality_id(
+            streets
+        )
     )
+
+
+    # --------------------------------------------------------
+    # Record provenance
+    # --------------------------------------------------------
+
+    streets[
+        "centrality_source"
+    ] = (
+        source_path.name
+    )
+
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # No geometry operation occurs between reading the source
+    # and writing the output.
+    #
+    # Therefore the geometries in the centrality network are
+    # copies of those in the main.py street network.
+    # --------------------------------------------------------
+
+
+    # --------------------------------------------------------
+    # Save
+    # --------------------------------------------------------
+
+    print(
+        "\nSaving centrality street network..."
+    )
+
 
     streets.to_file(
-        analysis_path,
-        layer="street_net_sdna",
+        CENTRALITY_NETWORK_PATH,
+        layer="centrality_street_network",
         driver="GPKG",
     )
 
-    print("=" * 60)
-    print("sDNA analysis input ready")
-    print("=" * 60)
-
-    print(
-        "Open THIS file in QGIS:"
-    )
-
-    print(
-        f"  {analysis_path}"
-    )
-
-    print()
-    print(
-        "Layer:"
-    )
-    print(
-        "  street_net_sdna"
-    )
-
-    print()
-    print(
-        "Run:"
-    )
-    print(
-        "  Processing Toolbox "
-        "→ sDNA Integral"
-    )
-
-    print()
-    print(
-        "Make sure 'sdna_id' is preserved "
-        "in the output."
-    )
-
-    print()
-    print(
-        "Save the sDNA output as:"
-    )
-
-    print(
-        f"  {SDNA_RAW_OUTPUT}"
-    )
-
-    print()
-    print(
-        "Then change:"
-    )
-
-    print(
-        '  MODE = "process"'
-    )
-
-    print(
-        "and run centrality.py again."
-    )
-
-
-# ============================================================
-# 5. PROCESS MODE
-# ============================================================
-
-def process_sdna_result():
-
-    print("=" * 60)
-    print("Processing sDNA centrality result")
-    print("=" * 60)
-
-    if not SDNA_RAW_OUTPUT.exists():
-        raise FileNotFoundError(
-            "The expected sDNA result does not exist:\n"
-            f"{SDNA_RAW_OUTPUT}\n\n"
-            "Run sDNA Integral in QGIS first."
-        )
-
-    sdna = gpd.read_file(
-        SDNA_RAW_OUTPUT
-    )
-
-    if sdna.empty:
-        raise ValueError(
-            "The sDNA output is empty."
-        )
-
-    if "sdna_id" not in sdna.columns:
-        raise KeyError(
-            "The sDNA result does not contain 'sdna_id'.\n"
-            "The source street ID must be preserved "
-            "through the QGIS/sDNA analysis."
-        )
-
-    if sdna["sdna_id"].duplicated().any():
-        raise ValueError(
-            "Duplicate sdna_id values found "
-            "in the sDNA result."
-        )
-
-    print(
-        f"Features in sDNA result: "
-        f"{len(sdna):,}"
-    )
-
-    print()
-    print("=" * 60)
-    print("Columns produced by sDNA")
-    print("=" * 60)
-
-    for column in sdna.columns:
-        print(
-            f"  {column}"
-        )
 
     # --------------------------------------------------------
-    # Save without renaming the sDNA fields yet.
-    #
-    # The exact field names depend on:
-    # - sDNA version
-    # - radius
-    # - metric
-    # - analysis settings
-    #
-    # After the first run we can identify the exact
-    # closeness and betweenness columns.
+    # Finished
     # --------------------------------------------------------
 
-    sdna.to_file(
-        SDNA_CENTRALITY_OUTPUT,
-        layer="sdna_centrality",
-        driver="GPKG",
-    )
-
-    print("=" * 60)
-    print("Centrality processing complete")
-    print("=" * 60)
-
     print(
-        f"Saved:"
+        "\n"
+        "============================================================"
     )
 
     print(
-        f"  {SDNA_CENTRALITY_OUTPUT}"
-    )
-
-    print()
-    print(
-        "Next step:"
+        "DONE"
     )
 
     print(
-        "Inspect the printed sDNA fields and select "
-        "the closeness and betweenness columns "
-        "for pedestrian_volume.py."
+        "============================================================"
+    )
+
+
+    print(
+        "\nSource network:"
+    )
+
+    print(
+        f"  {source_path}"
+    )
+
+
+    print(
+        "\nCentrality network:"
+    )
+
+    print(
+        f"  {CENTRALITY_NETWORK_PATH}"
+    )
+
+
+    print(
+        f"\nNumber of street features:"
+        f"\n  {len(streets):,}"
+    )
+
+
+    print(
+        "\nGeometry/topology modifications:"
+        "\n  NONE"
+    )
+
+
+    print(
+        "\nThe source street network was NOT modified."
+    )
+
+
+    print(
+        "\n"
+        "------------------------------------------------------------"
+    )
+
+    print(
+        "NEXT STEP: sDNA"
+    )
+
+    print(
+        "------------------------------------------------------------"
+    )
+
+
+    print(
+        "\nOpen this GeoPackage in QGIS:"
+    )
+
+    print(
+        f"\n  {CENTRALITY_NETWORK_PATH}"
+    )
+
+
+    print(
+        "\nSelect layer:"
+    )
+
+    print(
+        "\n  centrality_street_network"
+    )
+
+
+    print(
+        "\nUse this layer as the input to:"
+    )
+
+    print(
+        "\n  sDNA Integral"
+    )
+
+
+    print(
+        "\nIMPORTANT:"
+    )
+
+    print(
+        "\n  Preserve the 'centrality_id' field "
+        "in the sDNA output."
+    )
+
+
+    print(
+        "\n"
+        "============================================================"
     )
 
 
 # ============================================================
-# 6. Run
+# EXECUTE
 # ============================================================
 
-if MODE == "prepare":
+if __name__ == "__main__":
 
-    prepare_for_sdna()
-
-elif MODE == "process":
-
-    process_sdna_result()
-
-else:
-
-    raise ValueError(
-        "MODE must be either "
-        "'prepare' or 'process'."
-    )
+    create_centrality_network()

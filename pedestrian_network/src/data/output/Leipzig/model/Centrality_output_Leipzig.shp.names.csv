@@ -1,0 +1,31 @@
+ID,ID
+LConn,Line Connectivity
+LLen,Line Length
+LFrac,Link Fraction
+LAC,Line Ang Curvature
+LSin,Line Sinuosity
+LBear,Line Bearing
+MAD500,Mean Ang Dist R500
+NQPDA500,NetQuantPD Ang R500
+BtA500,Betweenness Ang R500
+TPBtA500,TPBetweenness Ang R500
+TPD500,TPDestination R500
+Lnk500,Links R500
+Len500,Length R500
+AngD500,Ang Dist R500
+Wt500,Weight R500
+MGLA500,MeanGeoLen Ang R500
+MCF500,Mean Crow Flight R500
+DivA500,Diversion Ratio Ang R500
+MAD1000,Mean Ang Dist R1000
+NQPDA1000,NetQuantPD Ang R1000
+BtA1000,Betweenness Ang R1000
+TPBtA1000,TPBetweenness Ang R1000
+TPD1000,TPDestination R1000
+Lnk1000,Links R1000
+Len1000,Length R1000
+AngD1000,Ang Dist R1000
+Wt1000,Weight R1000
+MGLA1000,MeanGeoLen Ang R1000
+MCF1000,Mean Crow Flight R1000
+DivA1000,Diversion Ratio Ang R1000

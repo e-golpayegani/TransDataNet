@@ -1,6 +1,10 @@
 {
     "filename": "osm_area_Leipzig_v1.1",
+<<<<<<< HEAD
     "creation_date": "2026-09-16T14:44:22.650959",
+=======
+    "creation_date": "2026-09-21T11:33:08.492476",
+>>>>>>> 1475c7516231e8e2a09a7a6a35142a5405cfe6c8
     "version": "1.1",
     "stage": "draft",
     "description": "Description of the contents",
