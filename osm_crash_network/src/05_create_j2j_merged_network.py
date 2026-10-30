@@ -40,7 +40,7 @@ CITY = "Dresden"
 
 DATA_ROOT = Path(
     r"Z:\_Public\Promotionen\Golpayegani\Paper3"
-    r"\OSM_Network_Simplification\GIS_Data"
+    r"\03_OSM_Network_Simplification\GIS_Data"
 )
 
 # Parallel-carriageway detection thresholds

@@ -30,7 +30,7 @@ NETWORK_TYPE = "all"
 # Change this to your own external GIS data folder.
 # Do NOT store large GeoPackage files inside the GitHub repo.
 DATA_ROOT = Path(
-    r"Z:\_Public\Promotionen\Golpayegani\Paper3\OSM_Network_Simplification\GIS_Data"
+    r"Z:\_Public\Promotionen\Golpayegani\Paper3\03_OSM_Network_Simplification\GIS_Data"
 )
 
 # -----------------------------

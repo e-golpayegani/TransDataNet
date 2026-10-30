@@ -23,7 +23,7 @@ import osmnx as ox
 CITY = "Dresden"
 
 DATA_ROOT = Path(
-    r"Z:\_Public\Promotionen\Golpayegani\Paper3\OSM_Network_Simplification\GIS_Data"
+    r"Z:\_Public\Promotionen\Golpayegani\Paper3\03_OSM_Network_Simplification\GIS_Data"
 )
 
 JUNCTION_BUFFER_METERS = 25

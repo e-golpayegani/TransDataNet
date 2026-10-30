@@ -21,7 +21,7 @@ import pandas as pd
 CITY = "Dresden"
 
 DATA_ROOT = Path(
-    r"Z:\_Public\Promotionen\Golpayegani\Paper3\OSM_Network_Simplification\GIS_Data"
+    r"Z:\_Public\Promotionen\Golpayegani\Paper3\03_OSM_Network_Simplification\GIS_Data"
 )
 
 CITY_DIR = DATA_ROOT / CITY
@@ -94,6 +94,12 @@ j2j = gpd.read_file(J2J_GPKG, layer=J2J_LAYER)
 
 print("Loading Level 1 segment edges...")
 segment_edges = gpd.read_file(SEGMENT_GPKG, layer=SEGMENT_EDGES_LAYER)
+# Optional OSM tags may be absent from an entire downloaded layer.
+for column in ["highway", "footway", "traffic_calming", "railway"]:
+    if column not in segment_edges:
+        print(f"Optional OSM tag absent: {column}; no tagged edges available.")
+        segment_edges[column] = pd.NA
+
 
 if segment_edges.crs != j2j.crs:
     segment_edges = segment_edges.to_crs(j2j.crs)
@@ -234,7 +240,7 @@ j2j["crossing_density_per_km"] = (
 TRAFFIC_CALMING_BUFFER_M = 8
 
 traffic_calming_edges = segment_edges[
-    segment_edges.get("traffic_calming", "").astype(str).str.lower().notna()
+    segment_edges["traffic_calming"].notna()
 ].copy()
 
 traffic_calming_edges = traffic_calming_edges[

@@ -73,13 +73,13 @@ AGGREGATE_COLUMNS = [
 # -----------------------------
 CITY_DIR = DATA_ROOT / CITY
 PROCESSED_DIR = CITY_DIR / "processed"
-OUTPUT_DIR = CITY_DIR / "outputs"
+OUTPUT_DIR = CITY_DIR / "outputs" / "crash_analysis_rebuilt_20261030"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 JUNCTION_GPKG = PROCESSED_DIR / f"{CITY.lower()}_junction_areas.gpkg"
-SEGMENT_GPKG = PROCESSED_DIR / f"{CITY.lower()}_unified_street_network.gpkg"
+SEGMENT_GPKG = PROCESSED_DIR / f"{CITY.lower()}_unified_street_network_rebuilt_20261030.gpkg"
 ORIGINAL_GPKG = PROCESSED_DIR / f"{CITY.lower()}_segment_network.gpkg"
-SOURCE_GPKG = PROCESSED_DIR / f"{CITY.lower()}_j2j_detailed_network.gpkg"
+SOURCE_GPKG = PROCESSED_DIR / f"{CITY.lower()}_j2j_detailed_network_rebuilt_20261030.gpkg"
 
 OUTPUT_GPKG = OUTPUT_DIR / f"{CITY.lower()}_classified_and_aggregated_crashes.gpkg"
 
@@ -362,6 +362,8 @@ def build_network_inventory(segments, junctions, source_edges, original_edges):
         level1_ids = set(source.graph_edge_ids)
         level0_ids = set().union(*(raw_lineage[value] for value in level1_ids))
         level3_ids = id_values(feature.source_j2j_ids)
+        if id_values(feature.osmid) != set().union(*(id_values(value) for value in source.osmid)):
+            raise ValueError(f"Level 4 OSM way provenance mismatch: {feature.level4_id}")
         rows.append({
             "location_type": "segment", "network_id": feature.level4_id,
             "level4_id": feature.level4_id, "level4_length_m": feature.geometry.length,
@@ -740,6 +742,7 @@ assert assignments.graph_edge_ids.notna().all() and assignments.graph_edge_ids.n
 assert unmatched_segment_crashes.empty, "All crashes must be assigned"
 assert assignments.crash_id.is_unique, "Crash assigned more than once"
 assert set(assignments.crash_id) == set(crashes.crash_id), "Crash lost during assignment"
+print("Reading yearly CSV reference and road-surface conditions...", flush=True)
 csv_reference, csv_inventory = load_csv_reference(CRASH_CSV_DIR)
 missing_csv_years = sorted(set(YEARS) - set(csv_reference.year))
 if missing_csv_years:
@@ -802,6 +805,7 @@ if "IstStrassenzustand" not in assignments and "IstStrassenzustand" in csv_refer
             on=["year", "_reference_id"], how="left", validate="many_to_one",
         ).drop(columns="_reference_id")
 
+print("Checking Level 0-4 lineage and building feature inventory...", flush=True)
 inventory = build_network_inventory(segments, junctions, source_edges, original_edges)
 network_counts = export_counts(assignments, inventory)
 OUTPUT_CSV = OUTPUT_DIR / f"{CITY.lower()}_network_crash_counts_2022_2025.csv"

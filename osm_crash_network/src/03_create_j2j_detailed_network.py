@@ -27,7 +27,7 @@ from shapely.ops import unary_union, linemerge # merge line geometries
 CITY = "Dresden"
 
 DATA_ROOT = Path(
-    r"Z:\_Public\Promotionen\Golpayegani\Paper3\OSM_Network_Simplification\GIS_Data"
+    r"Z:\_Public\Promotionen\Golpayegani\Paper3\03_OSM_Network_Simplification\GIS_Data"
 )
 
 CITY_DIR = DATA_ROOT / CITY
