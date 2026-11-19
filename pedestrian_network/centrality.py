@@ -1,851 +1,112 @@
+"""Prepare the attributed model network and sDNA input before QGIS analysis.
+
+Assign segment_id once and preserve it in the shared network.
+After calculating sDNA results, run pedestrian_volume.py to attach them and
+generate the separate model layers.
 """
-centrality.py
-
-Purpose
--------
-Create a separate copy of the processed street network for sDNA
-centrality analysis.
-
-The city is read automatically from config.yml using config_data.
-
-The script:
-
-1. Reads the city from config.yml.
-2. Finds the latest street_net_<city>_v*.gpkg in the city's draft folder.
-3. Loads that street network.
-4. Performs basic diagnostic checks.
-5. Adds a stable "centrality_id".
-6. Records which street-network file was used as the source.
-7. Saves a separate centrality street network in the draft folder.
-
-The output can then be used directly as the input network in
-sDNA Integral in QGIS.
-
-IMPORTANT
----------
-This script does NOT:
-
-- simplify the network
-- clean the network
-- snap lines
-- split lines
-- merge lines
-- remove lines
-- change topology
-- change geometry
-- calculate centrality
-
-Closeness/farness and betweenness are calculated manually using
-sDNA Integral in QGIS.
-"""
-
-
-# ============================================================
-# IMPORTS
-# ============================================================
-
-from pathlib import Path
+import argparse
 import re
+from pathlib import Path
 
 import geopandas as gpd
 
 from src.utils.config_loader import config_data
-
-
-
-# ============================================================
-# SETTINGS
-# ============================================================
-
-# City is read automatically from config.yml.
-#
-# This is the same approach used in main.py.
-#
-# Example:
-#
-# city_name: Leipzig
-#
-# -> CITY = "Leipzig"
+from pedestrian_volume import (
+    geometry_positions, initialize_network,
+    save_network, normalize_identity,
+)
 
 CITY = config_data["city_name"]
+CITY_DIR = Path(__file__).resolve().parent / "src" / "data" / "output" / CITY
 
-
-# Version of the centrality-specific street network.
-#
-# This version is independent from the version of the source
-# street network.
-
-CENTRALITY_VERSION = "1.0"
-
-
-# ============================================================
-# PATHS
-# ============================================================
-
-# centrality.py is located in:
-#
-# pedestrian_network/
-#
-# Therefore the project directory is the directory containing
-# this script.
-
-PROJECT_DIR = Path(__file__).resolve().parent
-
-
-# Existing project output structure:
-#
-# pedestrian_network/
-# └── src/
-#     └── data/
-#         └── output/
-#             └── Leipzig/
-#                 └── draft/
-
-OUTPUT_ROOT = (
-    PROJECT_DIR
-    / "src"
-    / "data"
-    / "output"
-)
-
-
-CITY_DIR = (
-    OUTPUT_ROOT
-    / CITY
-)
-
-
-DRAFT_DIR = (
-    CITY_DIR
-    / "draft"
-)
-
-
-# Check that the city output directory exists.
-
-if not CITY_DIR.exists():
-
-    raise FileNotFoundError(
-        "\n"
-        f"City output directory does not exist:\n"
-        f"{CITY_DIR}\n\n"
-        f"Check city_name in config.yml.\n"
-        f"Current city: {CITY}"
-    )
-
-
-# Check that draft directory exists.
-
-if not DRAFT_DIR.exists():
-
-    raise FileNotFoundError(
-        "\n"
-        f"Draft directory does not exist:\n"
-        f"{DRAFT_DIR}"
-    )
-
-
-# Output of THIS script.
-
-CENTRALITY_NETWORK_PATH = (
-    DRAFT_DIR
-    / (
-        f"centrality_street_net_"
-        f"{CITY}_"
-        f"v{CENTRALITY_VERSION}.gpkg"
-    )
-)
-
-
-# ============================================================
-# VERSION HANDLING
-# ============================================================
 
 def get_version(path):
-    """
-    Extract the version number from a versioned GeoPackage.
+    match = re.search(r"_v(\d+)\.(\d+)\.gpkg$", path.name)
+    return tuple(map(int, match.groups())) if match else (-1, -1)
 
-    Examples
-    --------
-
-    street_net_Leipzig_v1.0.gpkg
-        -> (1, 0)
-
-    street_net_Leipzig_v1.2.gpkg
-        -> (1, 2)
-
-    street_net_Leipzig_v2.3.gpkg
-        -> (2, 3)
-
-
-    Parameters
-    ----------
-    path : pathlib.Path
-        Path to the GeoPackage.
-
-
-    Returns
-    -------
-    tuple
-        (major_version, minor_version)
-
-        Returns (-1, -1) if no valid version number
-        can be found.
-    """
-
-    match = re.search(
-        r"_v(\d+)\.(\d+)\.gpkg$",
-        path.name,
-        flags=re.IGNORECASE,
-    )
-
-    if match is None:
-
-        return (-1, -1)
-
-    major = int(
-        match.group(1)
-    )
-
-    minor = int(
-        match.group(2)
-    )
-
-    return (
-        major,
-        minor,
-    )
-
-
-# ============================================================
-# FIND LATEST STREET NETWORK
-# ============================================================
 
 def find_latest_street_network():
-    """
-    Find the latest processed street network for the city.
-
-    Search location
-    ---------------
-
-    src/data/output/<CITY>/draft/
-
-
-    Expected naming
-    ---------------
-
-    street_net_<CITY>_v*.gpkg
-
-
-    Example
-    -------
-
-    If draft contains:
-
-        street_net_Leipzig_v1.0.gpkg
-        street_net_Leipzig_v1.1.gpkg
-        street_net_Leipzig_v1.2.gpkg
-
-    this function returns:
-
-        street_net_Leipzig_v1.2.gpkg
-    """
-
-    pattern = (
-        f"street_net_{CITY}_v*.gpkg"
-    )
-
-
-    candidates = list(
-        DRAFT_DIR.glob(
-            pattern
-        )
-    )
-
-
+    # main.py saves POI-enriched networks here; draft is preprocessing only.
+    candidates = [
+        p for p in CITY_DIR.glob(f"street_net_{CITY}_v*.gpkg")
+        if get_version(p) != (-1, -1)
+    ]
     if not candidates:
-
         raise FileNotFoundError(
-            "\n"
-            "No processed street network found.\n\n"
-            f"City:\n"
-            f"  {CITY}\n\n"
-            f"Folder searched:\n"
-            f"  {DRAFT_DIR}\n\n"
-            f"Expected filename pattern:\n"
-            f"  street_net_{CITY}_v*.gpkg"
+            f"No attributed street network in {CITY_DIR}. Run main.py first; "
+            "the draft network does not contain the collected POI data."
         )
+    return max(candidates, key=get_version)
 
 
-    latest = max(
-        candidates,
-        key=get_version,
-    )
-
-
-    return latest
-
-
-# ============================================================
-# NETWORK CHECK
-# ============================================================
-
-def check_network(gdf):
-    """
-    Perform basic diagnostic checks before the network
-    is sent to sDNA.
-
-    IMPORTANT
-    ---------
-
-    This function only REPORTS problems.
-
-    It does not:
-
-    - repair geometry
-    - simplify geometry
-    - snap geometry
-    - remove geometry
-    - modify topology
-    """
-
-
-    print(
-        "\n"
-        "============================================================"
-    )
-
-    print(
-        "NETWORK CHECK"
-    )
-
-    print(
-        "============================================================"
-    )
-
-
-    # --------------------------------------------------------
-    # Empty dataset
-    # --------------------------------------------------------
-
-    if gdf.empty:
-
-        raise ValueError(
-            "The street network is empty."
-        )
-
-
-    print(
-        f"\nNumber of street features: "
-        f"{len(gdf):,}"
-    )
-
-
-    # --------------------------------------------------------
-    # CRS
-    # --------------------------------------------------------
-
-    if gdf.crs is None:
-
-        raise ValueError(
-            "\nThe street network has no CRS."
-        )
-
-
-    print(
-        f"\nCRS:\n"
-        f"  {gdf.crs}"
-    )
-
-
-    if gdf.crs.is_geographic:
-
-        print(
-            "\nWARNING:"
-            "\nThe network uses a geographic CRS."
-            "\nFor metric-radius centrality analysis, "
-            "a projected CRS in metres is recommended."
-        )
-
+def prepare_network(version, source=None):
+    path = CITY_DIR / "model" / f"pedestrian_model_network_{CITY}_v{version}.gpkg"
+    input_path = CITY_DIR / "draft" / f"centrality_input_{CITY}_v{version}.gpkg"
+    if path.exists():
+        network = gpd.read_file(path, layer="pedestrian_model_network")
+        migrated = normalize_identity(network)
+        if set(migrated.columns) != set(network.columns):
+            save_network(migrated, path)
+            print("Migrated saved IDs to segment_id without renumbering.")
+        network = migrated
+        if source is not None:
+            raise ValueError("This model network already exists. Use a new version for a new source.")
+        print(f"Reusing model network and its existing IDs: {path}")
     else:
-
-        print(
-            "\nCRS type:"
-            "\n  Projected"
+        source = Path(source) if source else find_latest_street_network()
+        streets = gpd.read_file(source)
+        required = (
+            "laenge [km]",
+            "Dienstleistung, Einzelhandel, Gastronomie: Anzahl",
+            "Hotels, Pensionen: Anzahl",
         )
+        missing = [c for c in required if c not in streets]
+        if missing:
+            raise ValueError(f"Source lacks model attributes: {missing}. Use the main.py output.")
+        if streets.crs is None or streets.geometry.isna().any() or not streets.geometry.is_valid.all():
+            raise ValueError("Source has missing/invalid geometries or no CRS.")
+        # Adopt the IDs of an existing analyzed input, rather than renumbering it.
+        legacy = gpd.read_file(input_path, layer="centrality_input") if input_path.exists() else None
+        network = initialize_network(streets, source.name, legacy)
+        network["network_version"] = version
+        save_network(network, path)
+        print(f"Created attributed model network: {path}")
+    if input_path.exists():
+        legacy = gpd.read_file(input_path, layer="centrality_input")
+        migrated = normalize_identity(legacy)
+        positions = geometry_positions(network, migrated)
+        if not (migrated.iloc[positions].segment_id.to_numpy() == network.segment_id.to_numpy()).all():
+            raise ValueError("Existing sDNA input has different segment IDs.")
+        if set(migrated.columns) != set(legacy.columns):
+            migrated.to_file(input_path, layer="centrality_input", driver="GPKG")
+            print("Renamed existing input IDs to segment_id; geometries preserved.")
+        print(f"Preserved existing sDNA input: {input_path}")
+    else:
+        input_path.parent.mkdir(parents=True, exist_ok=True)
+        # The input is an export of the canonical streets, not a new network.
+        network.to_file(input_path, layer="centrality_input", driver="GPKG")
+        print(f"Created sDNA input: {input_path}")
+    return network, path, input_path
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", default="1.0", help="Frozen model-network version")
+    parser.add_argument("--source", type=Path, help="Specific POI-enriched main.py output")
+    args = parser.parse_args()
+    if not re.fullmatch(r"\d+\.\d+", args.version):
+        parser.error("--version must be major.minor, e.g. 1.0")
+    network, path, input_path = prepare_network(args.version, args.source)
+    print(f"City: {CITY}; streets: {len(network):,}")
+    print(f"Run sDNA Integral on {input_path} (layer: centrality_input).")
+    print("Keep this exact input. Save the actual sDNA result layer as:")
+    print(CITY_DIR / "model" / f"centrality_output_{CITY}_v{args.version}.gpkg")
+    print("Suggested result layer: centrality_output.")
+    print(f"Then run: python pedestrian_volume.py --version {args.version}")
+    print("It imports the results, restores segment_id if omitted, and runs the models.")
+    print("For another export name, pass --sdna-results and --layer to pedestrian_volume.py.")
+    print("Do not regenerate IDs between models. Use a new version if streets change.")
 
-
-    # --------------------------------------------------------
-    # Geometry column
-    # --------------------------------------------------------
-
-    if "geometry" not in gdf.columns:
-
-        raise ValueError(
-            "No geometry column found."
-        )
-
-
-    # --------------------------------------------------------
-    # Geometry types
-    # --------------------------------------------------------
-
-    geometry_types = (
-        gdf.geometry
-        .geom_type
-        .value_counts()
-    )
-
-
-    print(
-        "\nGeometry types:"
-    )
-
-
-    for geometry_type, count in geometry_types.items():
-
-        print(
-            f"  {geometry_type}: "
-            f"{count:,}"
-        )
-
-
-    # --------------------------------------------------------
-    # Missing geometries
-    # --------------------------------------------------------
-
-    missing_geometry = (
-        gdf.geometry.isna()
-    )
-
-
-    number_missing = int(
-        missing_geometry.sum()
-    )
-
-
-    print(
-        f"\nMissing geometries: "
-        f"{number_missing:,}"
-    )
-
-
-    # --------------------------------------------------------
-    # Empty geometries
-    # --------------------------------------------------------
-
-    empty_geometry = (
-        gdf.geometry.is_empty
-    )
-
-
-    number_empty = int(
-        empty_geometry.sum()
-    )
-
-
-    print(
-        f"Empty geometries: "
-        f"{number_empty:,}"
-    )
-
-
-    # --------------------------------------------------------
-    # Invalid geometries
-    # --------------------------------------------------------
-
-    invalid_geometry = (
-        ~gdf.geometry.is_valid
-    )
-
-
-    number_invalid = int(
-        invalid_geometry.sum()
-    )
-
-
-    print(
-        f"Invalid geometries: "
-        f"{number_invalid:,}"
-    )
-
-
-    if number_invalid > 0:
-
-        print(
-            "\nWARNING:"
-            "\nInvalid geometries were detected."
-            "\nThey are NOT being repaired automatically."
-        )
-
-
-    # --------------------------------------------------------
-    # Warnings
-    # --------------------------------------------------------
-
-    if (
-        number_missing > 0
-        or number_empty > 0
-    ):
-
-        print(
-            "\nWARNING:"
-            "\nMissing or empty geometries were detected."
-            "\nNothing has been removed automatically."
-        )
-
-
-# ============================================================
-# CENTRALITY ID
-# ============================================================
-
-def add_centrality_id(gdf):
-    """
-    Create a stable identifier for the centrality network.
-
-    This identifier allows the sDNA result to be linked
-    back to the street network.
-
-    If centrality_id already exists, it is checked and
-    preserved.
-    """
-
-
-    gdf = gdf.copy()
-
-
-    # --------------------------------------------------------
-    # Existing ID
-    # --------------------------------------------------------
-
-    if "centrality_id" in gdf.columns:
-
-        print(
-            "\nExisting 'centrality_id' found."
-        )
-
-
-        # Missing IDs
-
-        number_missing_ids = int(
-            gdf[
-                "centrality_id"
-            ]
-            .isna()
-            .sum()
-        )
-
-
-        if number_missing_ids > 0:
-
-            raise ValueError(
-                "\n"
-                "Existing centrality_id contains "
-                f"{number_missing_ids:,} missing values."
-            )
-
-
-        # Duplicate IDs
-
-        number_duplicate_ids = int(
-            gdf[
-                "centrality_id"
-            ]
-            .duplicated()
-            .sum()
-        )
-
-
-        if number_duplicate_ids > 0:
-
-            raise ValueError(
-                "\n"
-                "Existing centrality_id contains "
-                f"{number_duplicate_ids:,} duplicates."
-            )
-
-
-        print(
-            "Existing centrality_id is valid."
-        )
-
-
-        return gdf
-
-
-    # --------------------------------------------------------
-    # New ID
-    # --------------------------------------------------------
-
-    gdf = gdf.reset_index(
-        drop=True
-    )
-
-
-    gdf[
-        "centrality_id"
-    ] = (
-        gdf.index + 1
-    )
-
-
-    print(
-        "\nCreated new 'centrality_id'."
-    )
-
-
-    return gdf
-
-
-# ============================================================
-# CREATE CENTRALITY STREET NETWORK
-# ============================================================
-
-def create_centrality_network():
-    """
-    Main workflow.
-    """
-
-
-    print(
-        "\n"
-        "============================================================"
-    )
-
-    print(
-        "CENTRALITY STREET NETWORK"
-    )
-
-    print(
-        "============================================================"
-    )
-
-
-    print(
-        f"\nCity from config.yml:"
-        f"\n  {CITY}"
-    )
-
-
-    # --------------------------------------------------------
-    # Find latest street network
-    # --------------------------------------------------------
-
-    source_path = (
-        find_latest_street_network()
-    )
-
-
-    source_version = (
-        get_version(
-            source_path
-        )
-    )
-
-
-    print(
-        "\nLatest processed street network:"
-    )
-
-
-    print(
-        f"  {source_path.name}"
-    )
-
-
-    print(
-        f"\nDetected source version:"
-        f"\n  v{source_version[0]}."
-        f"{source_version[1]}"
-    )
-
-
-    # --------------------------------------------------------
-    # Load
-    # --------------------------------------------------------
-
-    print(
-        "\nLoading network..."
-    )
-
-
-    streets = gpd.read_file(
-        source_path
-    )
-
-
-    # --------------------------------------------------------
-    # Check
-    # --------------------------------------------------------
-
-    check_network(
-        streets
-    )
-
-
-    # --------------------------------------------------------
-    # Stable ID
-    # --------------------------------------------------------
-
-    streets = (
-        add_centrality_id(
-            streets
-        )
-    )
-
-
-    # --------------------------------------------------------
-    # Record provenance
-    # --------------------------------------------------------
-
-    streets[
-        "centrality_source"
-    ] = (
-        source_path.name
-    )
-
-
-    # --------------------------------------------------------
-    # IMPORTANT:
-    #
-    # No geometry operation occurs between reading the source
-    # and writing the output.
-    #
-    # Therefore the geometries in the centrality network are
-    # copies of those in the main.py street network.
-    # --------------------------------------------------------
-
-
-    # --------------------------------------------------------
-    # Save
-    # --------------------------------------------------------
-
-    print(
-        "\nSaving centrality street network..."
-    )
-
-
-    streets.to_file(
-        CENTRALITY_NETWORK_PATH,
-        layer="centrality_street_network",
-        driver="GPKG",
-    )
-
-
-    # --------------------------------------------------------
-    # Finished
-    # --------------------------------------------------------
-
-    print(
-        "\n"
-        "============================================================"
-    )
-
-    print(
-        "DONE"
-    )
-
-    print(
-        "============================================================"
-    )
-
-
-    print(
-        "\nSource network:"
-    )
-
-    print(
-        f"  {source_path}"
-    )
-
-
-    print(
-        "\nCentrality network:"
-    )
-
-    print(
-        f"  {CENTRALITY_NETWORK_PATH}"
-    )
-
-
-    print(
-        f"\nNumber of street features:"
-        f"\n  {len(streets):,}"
-    )
-
-
-    print(
-        "\nGeometry/topology modifications:"
-        "\n  NONE"
-    )
-
-
-    print(
-        "\nThe source street network was NOT modified."
-    )
-
-
-    print(
-        "\n"
-        "------------------------------------------------------------"
-    )
-
-    print(
-        "NEXT STEP: sDNA"
-    )
-
-    print(
-        "------------------------------------------------------------"
-    )
-
-
-    print(
-        "\nOpen this GeoPackage in QGIS:"
-    )
-
-    print(
-        f"\n  {CENTRALITY_NETWORK_PATH}"
-    )
-
-
-    print(
-        "\nSelect layer:"
-    )
-
-    print(
-        "\n  centrality_street_network"
-    )
-
-
-    print(
-        "\nUse this layer as the input to:"
-    )
-
-    print(
-        "\n  sDNA Integral"
-    )
-
-
-    print(
-        "\nIMPORTANT:"
-    )
-
-    print(
-        "\n  Preserve the 'centrality_id' field "
-        "in the sDNA output."
-    )
-
-
-    print(
-        "\n"
-        "============================================================"
-    )
-
-
-# ============================================================
-# EXECUTE
-# ============================================================
 
 if __name__ == "__main__":
-
-    create_centrality_network()
+    main()
