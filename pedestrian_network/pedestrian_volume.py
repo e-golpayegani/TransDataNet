@@ -71,8 +71,15 @@ def geometry_positions(base, incoming):
     def keys(frame):
         if frame.geometry.isna().any() or frame.geometry.is_empty.any():
             raise ValueError("Missing/empty geometry prevents reliable matching.")
+        # QGIS may wrap a line in a one-part MultiLineString on export.
+        # Unwrap only that equivalent representation; do not merge/snap parts.
+        geometries = frame.geometry.map(
+            lambda geom: geom.geoms[0]
+            if geom.geom_type == "MultiLineString" and len(geom.geoms) == 1
+            else geom
+        )
         result = pd.Index(shapely.to_wkb(
-            shapely.normalize(shapely.force_2d(frame.geometry.array))
+            shapely.normalize(shapely.force_2d(geometries.array))
         ))
         if not result.is_unique:
             raise ValueError("Duplicate geometries make the match ambiguous.")
@@ -298,7 +305,7 @@ def save_model_layers(output, selected, output_path):
     return output_path
 
 
-def load_model_network(path, sdna_path=None, sdna_layer="centrality_output"):
+def load_model_network(path, sdna_path=None, sdna_layer=None):
     """Import and validate manual sDNA results before fitting any predictions."""
     network = gpd.read_file(path, layer="pedestrian_model_network")
     migrated = normalize_identity(network)
@@ -308,6 +315,18 @@ def load_model_network(path, sdna_path=None, sdna_layer="centrality_output"):
             raise ValueError("Supply the separate sDNA export, not the shared model network.")
         if not sdna_path.exists():
             raise FileNotFoundError(f"sDNA result file not found: {sdna_path}")
+        if sdna_layer is None:
+            layers = gpd.list_layers(sdna_path)
+            spatial_layers = layers.loc[layers.geometry_type.notna(), "name"].tolist()
+            if "centrality_output" in spatial_layers:
+                sdna_layer = "centrality_output"
+            elif len(spatial_layers) == 1:
+                sdna_layer = spatial_layers[0]
+            else:
+                raise ValueError(
+                    f"Select the sDNA result layer with --layer. Available: {spatial_layers}"
+                )
+        print(f"Reading sDNA result layer: {sdna_layer}")
         results = gpd.read_file(sdna_path, layer=sdna_layer)
         metadata_path = Path(path).with_suffix(".sdna.json")
         previous = json.loads(metadata_path.read_text()) if metadata_path.exists() else []
@@ -329,7 +348,7 @@ def main():
     parser.add_argument("--version", default="1.0")
     parser.add_argument("--models", nargs="+", choices=list(MODELS), default=list(MODELS))
     parser.add_argument("--sdna-results", type=Path, help="Optional custom path to the manual sDNA export")
-    parser.add_argument("--layer", default="centrality_output", help="sDNA export layer name")
+    parser.add_argument("--layer", help="sDNA layer name; auto-select centrality_output or the only spatial layer")
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+", args.version):
         parser.error("--version must be major.minor, e.g. 1.0")
