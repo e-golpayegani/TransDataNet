@@ -1,0 +1,8 @@
+{
+    "filename": "osm_street_net_Ostritz_v0.0",
+    "creation_date": "2026-11-25T11:03:36.572700",
+    "version": "0.0",
+    "stage": "interim",
+    "description": "Description of the contents",
+    "used in function:": "create_osm_streets_gdf"
+}

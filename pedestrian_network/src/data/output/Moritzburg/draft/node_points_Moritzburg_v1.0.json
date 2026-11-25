@@ -1,0 +1,8 @@
+{
+    "filename": "node_points_Moritzburg_v1.0",
+    "creation_date": "2026-11-24T11:27:04.749482",
+    "version": "1.0",
+    "stage": "draft",
+    "description": "Description of the contents",
+    "used in function:": "create_street_net_and_intersection_gpkg"
+}

@@ -1,0 +1,8 @@
+{
+    "filename": "osm_street_net_Moritzburg",
+    "creation_date": "2026-11-24T11:27:06.148557",
+    "version": "",
+    "stage": "interim",
+    "description": "Description of the contents",
+    "used in function:": "create_street_net_and_intersection_gpkg"
+}

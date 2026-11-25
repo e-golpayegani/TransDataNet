@@ -22,9 +22,8 @@ RETRIES  = int(os.getenv("OVERPASS_RETRIES", "3"))
 # overpy needs endpoints that end with /interpreter
 MIRRORS = [
     os.getenv("OVERPASS_URL"),  # e.g. https://overpass.kumi.systems/api/interpreter
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://lz4.overpass-api.de/api/interpreter",
-    "https://overpass-api.de/api/interpreter",
+    "https://overpass.maprva.org/api/interpreter",
+    "https://overpass.maprva.org/api/interpreter",
 ]
 MIRRORS = [m for m in MIRRORS if m]
 
@@ -157,7 +156,7 @@ def create_osm_streets_gdf():
     list_of_gdf = []
 
     for street_query in tqdm(osm_street_queries, desc="Querying Overpass"):
-
+        
         result = _query_overpass(api_overpass, street_query)
         gdf = _parse_osm_result(result)
         list_of_gdf.append(gdf)

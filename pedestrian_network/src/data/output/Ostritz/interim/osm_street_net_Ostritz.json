@@ -1,0 +1,8 @@
+{
+    "filename": "osm_street_net_Ostritz",
+    "creation_date": "2026-11-25T11:03:40.493148",
+    "version": "",
+    "stage": "interim",
+    "description": "Description of the contents",
+    "used in function:": "create_street_net_and_intersection_gpkg"
+}
