@@ -22,8 +22,8 @@ RETRIES  = int(os.getenv("OVERPASS_RETRIES", "3"))
 # overpy needs endpoints that end with /interpreter
 MIRRORS = [
     os.getenv("OVERPASS_URL"),  # e.g. https://overpass.kumi.systems/api/interpreter
-    "https://overpass.maprva.org/api/interpreter",
-    "https://overpass.maprva.org/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
 ]
 MIRRORS = [m for m in MIRRORS if m]
 

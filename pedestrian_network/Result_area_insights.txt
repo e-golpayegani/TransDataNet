@@ -14,5 +14,5 @@ INFO:root:water OsmValue: natural Anzahl_areas 0
 INFO:root:water OsmValue: basin Anzahl_areas 0
 INFO:root:water OsmValue: pond Anzahl_areas 0
 INFO:root:landuse OsmValue: forest Anzahl_areas 0
-INFO:pyogrio._io:Created 0 records
-INFO:pyogrio._io:Created 0 records
+INFO:pyogrio._io:Created 218 records
+INFO:pyogrio._io:Created 218 records
